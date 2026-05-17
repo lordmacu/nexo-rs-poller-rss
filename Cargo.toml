@@ -33,10 +33,10 @@ path = "src/main.rs"
 # carrying the `poller` feature + `PollerHandler` + `BrokerPollerHost`
 # helpers (Phase 96.6.a). Pin path-dep for in-workspace development;
 # flip to crates.io release before publish.
-nexo-microapp-sdk = { path = "../proyecto/crates/microapp-sdk", features = ["plugin", "poller"] }
-nexo-poller       = { path = "../proyecto/crates/poller" }
-nexo-broker       = { path = "../proyecto/crates/broker" }
-nexo-config       = { path = "../proyecto/crates/config" }
+nexo-microapp-sdk = { version = "0.1.20", features = ["plugin", "poller"] }
+nexo-poller       = "0.2.0"
+nexo-broker       = "0.1.5"
+nexo-config       = "0.1.9"
 
 tokio        = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "io-util", "io-std"] }
 async-trait  = "0.1"
