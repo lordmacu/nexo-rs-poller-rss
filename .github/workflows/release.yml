@@ -1,0 +1,72 @@
+name: release
+
+# Phase 96 — tag-push driven cargo publish to crates.io. The
+# canonical channel plugins (telegram/whatsapp/browser) also ship
+# binary tarballs via `nexo plugin install`, but poller plugins
+# install via `cargo install nexo-poller-rss` so the binary build
+# matrix is omitted. Add it later if a `nexo poller install`
+# command lands.
+#
+# Required repo secret: `CARGO_REGISTRY_TOKEN` (crates.io API token
+# with publish-new + publish-update scopes for this crate).
+#
+# Trigger: push tag matching `nexo-poller-rss-v*` (created by
+# `cargo release` per Phase 96 release wave).
+
+on:
+  push:
+    tags:
+      - "nexo-poller-rss-v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_NET_TIMEOUT: "60"
+
+jobs:
+  publish:
+    name: cargo publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+        with:
+          path: nexo-rs-poller-rss
+
+      - name: Checkout proyecto (path-dep workspace)
+        uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-rs
+          path: proyecto
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nexo-rs-poller-rss
+          key: release-${{ hashFiles('nexo-rs-poller-rss/Cargo.lock') }}
+
+      # cargo publish refuses path deps. Before publish, the
+      # release branch flips path = "../proyecto/crates/X" → version
+      # = "X.Y.Z" via `cargo release` or a sed in the publish PR.
+      # Verify here so a missed path-dep fails before publish runs.
+      - name: Reject lingering path deps in Cargo.toml
+        working-directory: nexo-rs-poller-rss
+        run: |
+          if grep -E '^\s*nexo-.*path\s*=' Cargo.toml; then
+            echo "ERROR: path deps detected — flip to crates.io before tagging" >&2
+            exit 1
+          fi
+
+      - name: cargo publish --dry-run
+        working-directory: nexo-rs-poller-rss
+        run: cargo publish --dry-run
+
+      - name: cargo publish
+        working-directory: nexo-rs-poller-rss
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
