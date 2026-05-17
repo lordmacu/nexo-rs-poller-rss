@@ -1,22 +1,24 @@
 name: release
 
-# Phase 96 — tag-push driven cargo publish to crates.io. The
-# canonical channel plugins (telegram/whatsapp/browser) also ship
-# binary tarballs via `nexo plugin install`, but poller plugins
-# install via `cargo install nexo-poller-rss` so the binary build
-# matrix is omitted. Add it later if a `nexo poller install`
-# command lands.
+# Phase 96 — tag-push driven release. Two parallel pipelines:
 #
-# Required repo secret: `CARGO_REGISTRY_TOKEN` (crates.io API token
-# with publish-new + publish-update scopes for this crate).
+#   1. publish     → cargo publish to crates.io (cargo install path)
+#   2. build       → 5-target binary tarballs (nexo plugin install path)
+#   3. github      → dedupe + softprops/action-gh-release upload
 #
-# Trigger: push tag matching `nexo-poller-rss-v*` (created by
-# `cargo release` per Phase 96 release wave).
+# Both install paths supported so operators can pick whichever:
+#   - `cargo install nexo-poller-rss`                       (source build)
+#   - `nexo plugin install lordmacu/nexo-rs-poller-rss`     (precompiled)
+#
+# Required repo secret: `CARGO_REGISTRY_TOKEN`.
+# Trigger: push tag matching `nexo-poller-rss-v*` (created by `cargo release`).
+# Also exposes `workflow_dispatch` as a manual rerun escape hatch.
 
 on:
   push:
     tags:
       - "nexo-poller-rss-v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -83,3 +85,116 @@ jobs:
           fi
           echo "cargo publish failed for non-idempotent reason"
           exit $rc
+
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+        with:
+          path: nexo-rs-poller-rss
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools (ring's cc-rs build.rs needs *-linux-musl-gcc)
+        if: contains(matrix.target, 'linux-musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install zig (pinned)
+        if: ${{ !contains(matrix.target, 'windows') }}
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.13.0"
+      - name: Install cargo-zigbuild
+        if: ${{ !contains(matrix.target, 'windows') }}
+        run: cargo install cargo-zigbuild --locked --version 0.22.3
+
+      - name: Build (Unix — cargo-zigbuild)
+        if: ${{ !contains(matrix.target, 'windows') }}
+        working-directory: nexo-rs-poller-rss
+        run: cargo zigbuild --release --target ${{ matrix.target }}
+      - name: Build (Windows — native cargo)
+        if: contains(matrix.target, 'windows')
+        working-directory: nexo-rs-poller-rss
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: package (nexo plugin install layout)
+        working-directory: nexo-rs-poller-rss
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/staging/bin
+          BIN="target/${{ matrix.target }}/release/nexo-poller-rss"
+          [ -f "${BIN}.exe" ] && BIN="${BIN}.exe"
+          cp "$BIN" dist/staging/bin/rss
+          cp nexo-plugin.toml dist/staging/nexo-plugin.toml
+
+          PLUGIN_ID=$(grep -E '^id[[:space:]]*=' nexo-plugin.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          VERSION=$(grep -E '^version[[:space:]]*=' nexo-plugin.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          TARBALL="${PLUGIN_ID}-${VERSION}-${{ matrix.target }}.tar.gz"
+
+          tar czf "dist/${TARBALL}" -C dist/staging bin/rss nexo-plugin.toml
+          { sha256sum "dist/${TARBALL}" 2>/dev/null || shasum -a 256 "dist/${TARBALL}"; } | awk '{print $1}' > "dist/${TARBALL}.sha256"
+          cp nexo-plugin.toml dist/nexo-plugin.toml
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            nexo-rs-poller-rss/dist/*.tar.gz
+            nexo-rs-poller-rss/dist/*.tar.gz.sha256
+            nexo-rs-poller-rss/dist/nexo-plugin.toml
+
+  github:
+    name: github release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/
+      # Dedupe nexo-plugin.toml — each matrix entry uploads its own
+      # copy (5 artifacts × 1 toml each), so `dist/**/nexo-plugin.toml`
+      # matches 5 paths. softprops/action-gh-release then tries to
+      # upload the same filename 5× in parallel → "asset already
+      # exists" 422 race. Collapse to a single canonical copy at
+      # `dist/nexo-plugin.toml` before the upload glob runs.
+      - name: Dedupe nexo-plugin.toml + sort tarballs
+        run: |
+          set -euo pipefail
+          ANY_TOML="$(find dist -type f -name nexo-plugin.toml | head -1)"
+          if [ -z "${ANY_TOML}" ]; then
+            echo "::error::no nexo-plugin.toml in artifacts"
+            exit 1
+          fi
+          find dist -type f -name nexo-plugin.toml -delete
+          cp "${ANY_TOML}" dist/nexo-plugin.toml
+          echo "Final upload set:"
+          find dist -maxdepth 2 -type f \( -name '*.tar.gz' -o -name '*.tar.gz.sha256' -o -name 'nexo-plugin.toml' \) | sort
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.tar.gz.sha256
+            dist/nexo-plugin.toml
+          generate_release_notes: true
