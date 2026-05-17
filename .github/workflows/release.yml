@@ -117,6 +117,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
+      # sqlite-vec.c (transitively pulled via nexo-memory) uses BSD
+      # `u_intN_t` typedefs that musl libc omits. Define them away
+      # via CFLAGS so the cc-rs build.rs compiles them as the
+      # standard `uintN_t` types.
+      - name: CFLAGS for sqlite-vec on musl (BSD u_intN_t typedefs)
+        if: contains(matrix.target, 'linux-musl')
+        run: |
+          MUSL_CFLAGS='-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t'
+          echo "CFLAGS_x86_64_unknown_linux_musl=${MUSL_CFLAGS}"  >> "$GITHUB_ENV"
+          echo "CFLAGS_aarch64_unknown_linux_musl=${MUSL_CFLAGS}" >> "$GITHUB_ENV"
 
       - name: Install zig (pinned)
         if: ${{ !contains(matrix.target, 'windows') }}
