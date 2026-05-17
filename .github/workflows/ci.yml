@@ -1,0 +1,67 @@
+name: ci
+
+# Phase 96 — pull-request + push validation. Runs `cargo build` +
+# `cargo nextest run --lib` on a 3-OS matrix so the RSS / Atom
+# parser cfg-branches stay green across platforms. Per-tag release
+# artifacts live in `release.yml` (added on first publish).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_NET_TIMEOUT: "60"
+
+jobs:
+  test:
+    name: cargo nextest (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-14
+          - windows-latest
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+        with:
+          path: nexo-rs-poller-rss
+
+      # Path deps in `Cargo.toml` reference `../proyecto/...`. Checkout
+      # the daemon workspace alongside so cargo can resolve them.
+      # Mirrors `release.yml` (when added). Same workflow on every OS
+      # so a per-platform path-dep bug surfaces here, not at tag time.
+      - name: Checkout proyecto (path-dep workspace)
+        uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-rs
+          path: proyecto
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nexo-rs-poller-rss
+          key: ci-${{ matrix.os }}-${{ hashFiles('nexo-rs-poller-rss/Cargo.lock') }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - name: cargo build (lib + bin + tests)
+        working-directory: nexo-rs-poller-rss
+        run: cargo build --lib --bin nexo-poller-rss --tests
+
+      - name: cargo nextest run (lib)
+        working-directory: nexo-rs-poller-rss
+        run: cargo nextest run --lib --no-fail-fast
