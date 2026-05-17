@@ -1,0 +1,54 @@
+# Phase 96 — standalone subprocess plugin for RSS / Atom feed
+# polling. Extracted from the in-tree `crates/poller/src/builtins/rss.rs`
+# during the Phase 96 Laravel-style poller refactor.
+#
+# Daemon discovers + spawns this binary via `[plugin.entrypoint]`;
+# poller kind "rss" reaches the daemon's `nexo-poller` runtime
+# through the `[plugin.poller]` manifest section (Phase 96.5) +
+# broker JSON-RPC tick dispatch (Phase 96.6).
+
+[package]
+name         = "nexo-poller-rss"
+version      = "0.1.0"
+description  = "RSS / Atom feed poller plugin for Nexo agents (out-of-tree subprocess)."
+edition      = "2021"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/lordmacu/nexo-rs-poller-rss"
+authors      = ["Cristian García <informacion@cristiangarcia.co>"]
+readme       = "README.md"
+keywords     = ["nexo", "plugin", "rss", "atom", "poller"]
+categories   = ["api-bindings"]
+rust-version = "1.80"
+
+[lib]
+name = "nexo_poller_rss"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nexo-poller-rss"
+path = "src/main.rs"
+
+[dependencies]
+# Framework deps from crates.io. SDK 0.2.0 is the first release
+# carrying the `poller` feature + `PollerHandler` + `BrokerPollerHost`
+# helpers (Phase 96.6.a). Pin path-dep for in-workspace development;
+# flip to crates.io release before publish.
+nexo-microapp-sdk = { path = "../proyecto/crates/microapp-sdk", features = ["plugin", "poller"] }
+nexo-poller       = { path = "../proyecto/crates/poller" }
+nexo-broker       = { path = "../proyecto/crates/broker" }
+nexo-config       = { path = "../proyecto/crates/config" }
+
+tokio        = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "io-util", "io-std"] }
+async-trait  = "0.1"
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+serde_yaml   = "0.9"
+anyhow       = "1"
+thiserror    = "2"
+tracing      = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest      = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[dev-dependencies]
+tempfile     = "3"
+tokio        = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }

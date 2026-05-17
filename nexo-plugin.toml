@@ -1,0 +1,52 @@
+# Phase 96 — out-of-tree standalone subprocess plugin.
+#
+# Bundled into the binary at compile-time via
+# `include_str!("../nexo-plugin.toml")` in `src/main.rs`. Daemon's
+# discovery walker invokes `nexo-poller-rss --print-manifest` to
+# register the plugin without spawning the JSON-RPC loop.
+
+manifest_version = 2
+
+[plugin]
+id               = "rss"
+version          = "0.1.0"
+name             = "RSS Poller"
+description      = "RSS / Atom feed poller — fetches feed, dispatches new items via deliver channel."
+min_nexo_version = ">=0.2.0"
+
+[plugin.entrypoint]
+command = "nexo-poller-rss"
+
+[plugin.requires]
+nexo_capabilities = ["broker"]
+
+# Defense-in-depth: the plugin only handles topics it owns.
+[plugin.capabilities.broker]
+subscribe = [
+    # Tick dispatch from the daemon's PluginPollerRouter.
+    "plugin.poller.rss.tick",
+    # Reverse-RPC reply inbox (subprocess publishes its
+    # `broker.request` to `daemon.rpc.rss`; daemon replies on
+    # the auto-generated `_inbox.<uuid>` topic, which the broker
+    # routes through subscribe).
+    "_inbox.>",
+]
+publish = [
+    # Reverse-RPC requests to daemon (credentials_get / log /
+    # metric_inc / llm_invoke).
+    "daemon.rpc.rss",
+    # Outbound channel topics RSS deliveries publish to.
+    "plugin.outbound.whatsapp.>",
+    "plugin.outbound.telegram.>",
+    "plugin.outbound.email.>",
+    # Tick reply inbox topics (daemon-generated _inbox.*).
+    "_inbox.>",
+]
+
+# Phase 96.5 — poller manifest section.
+[plugin.poller]
+kinds                = ["rss"]
+broker_topic_prefix  = "plugin.poller.rss"
+lifecycle            = "long_lived"
+max_concurrent_ticks = 4
+tick_timeout_secs    = 60
