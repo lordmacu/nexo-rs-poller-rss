@@ -56,6 +56,19 @@ metrics }` on the reply inbox. Error envelopes classify into
 `PollerError::Transient` / `::Permanent` / `::Config` via JSON-RPC
 error codes `-32001` / `-32002` / `-32602`.
 
+## Status
+
+| Component | State |
+|-----------|-------|
+| `[plugin.poller]` manifest | ✅ |
+| `PollerHandler` impl | ✅ |
+| RSS 2.0 + Atom parser | ✅ |
+| ETag conditional GET | ✅ |
+| Tests | ✅ 5/5 |
+| CI workflow | ✅ (`.github/workflows/ci.yml`) |
+| Release workflow | ✅ (`.github/workflows/release.yml`, tag-driven) |
+| crates.io publish | ⬜ pending Phase 96 release wave (operator action) |
+
 ## License
 
 MIT OR Apache-2.0.
